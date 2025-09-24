@@ -10,7 +10,7 @@
     - [Task 1: Initialize DVC and Track Data](#task-1-initialize-dvc-and-track-data)
     - [`[BONUS]` Task 2: Storing DVC Data Remotely](#bonus-task-2-storing-dvc-data-remotely)
     - [Task 3: Make Local Changes to the Dataset](#task-3-make-local-changes-to-the-dataset)
-  - [Part 3: Reproducing Pipelines](#part-3-reproducing-pipelines)
+  - [Part 2: Reproducing Pipelines](#part-2-reproducing-pipelines)
     - [Task 3: Create a Simple DVC Pipeline](#task-3-create-a-simple-dvc-pipeline)
   - [Lab Wrap-Up](#lab-wrap-up)
   - [Bonus Material](#bonus-material)
@@ -77,7 +77,7 @@
 
   3. Push the changes to the remote and commit the new metafile to git:
 
-## Part 3: Reproducing Pipelines
+## Part 2: Reproducing Pipelines
 
 ### Task 3: Create a Simple DVC Pipeline
 
