@@ -41,9 +41,24 @@
 
   1. Install DVC:
 
+     ```bash
+     pip install dvc
+     ```
+
   2. Initialize DVC in your Git repository (make sure to be in the root folder) and commit the changes:
 
+     ```bash
+     dvc init
+     git commit -m "Initialize DVC"
+     ```
+
   3. Start tracking a local [dataset](https://figshare.com/articles/dataset/Iris_DataSet/878028?file=1315364) with DVC (add it to DVC + push changes to git):
+
+     ```bash
+     dvc add data/iris.json
+     git add data/iris.json.dvc data/.gitignore
+     git commit -m "Track Iris dataset with DVC"
+     ```
 
 **Note**: You can look into the `name_of_your_dataset.dvc` metafile created for you local dataset. It contains a md5 hash value that is used for referencing the file. If you check the cache inside the `.dvc` directory you can see the file there with the name of the hash value. On GitHub only the metafile is stored/tracked. The actual data is stored in `.dvc/cache`.
 
@@ -55,11 +70,30 @@
 
   1. Create a "local remote" folder (i.e., a directory in the local file system) to serve as storage. Make sure it is ignored by `.gitignore` if set inside the git repo.
 
+     ```bash
+     mkdir /tmp/dvc-store # directory to serve as local remote storage
+     ```
+
   2. Add it as a DVC remote and commit the DVC config.
+    ```bash
+    dvc remote add -d myremote /tmp/dvc-store
+    git commit .dvc/config -m "Configure DVC remote"
+    ```
 
   3. Push the data to the "local remote". And check out the local remote now (it should contain a folder of md5 hash names and file contents):
 
+     ```bash
+     dvc push
+     ls -la /tmp/dvc-store
+     ```
+
   4. Test the storage. Delete the data from your repo data folder and `.dvc` cache, then pull it from 'remote' (the local that serves as remote):
+
+     ```bash
+     rm -rf .dvc/cache
+     rm -f data/iris.json
+     dvc pull
+     ```
 
   5. Check that the data was correctly pulled from the local folder that serves as storage.
 
@@ -75,7 +109,16 @@
 
   2. Track the latest version:
 
+     ```bash
+     dvc add data/iris.json
+     ```
+
   3. Push the changes to the remote and commit the new metafile to git:
+
+     ```bash
+     dvc push
+     git commit data/iris.json.dvc -m "Dataset updates"
+     ```
 
 ## Part 2: Reproducing Pipelines
 
@@ -85,15 +128,50 @@
 
   1. Write a preprocessing script (e.g., `src/preprocess.py`) that takes raw data and outputs modified data (e.g., multiply one of the features with 2).
 
+```python
+import pandas as pd
+df = pd.read_json("3day/lab/data/iris.json")
+df = df.dropna()
+df['petalWidth'] *= 2
+df.to_json("3day/lab/data/iris_clean.json", index=False)
+```
+
   2. Add a training script (e.g., `src/train.py`) that trains a simple model.  
 
+```python
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+import pickle
+
+df = pd.read_json("3day/lab/data/iris_clean.json")
+X, y = df.drop("species", axis=1), df["species"]
+
+model = LogisticRegression(max_iter=200)
+model.fit(X, y)
+
+with open("3day/lab/data/model.pkl", "wb") as f:
+    pickle.dump(model, f)
+```
+
   3. Create DVC pipeline stages with `dvc stage add`. And commit the pipeline files (`dvc.yaml`, `dvc.lock`) to Git.
+
+```python
+dvc stage add -n preprocess -d 3day/lab/code/preprocess.py -d 3day/lab/data/iris2.json -o 3day/lab/data/iris_clean.json python 3day/lab/code/preprocess.py
+dvc stage add -n train -d 3day/lab/code/train.py -d 3day/lab/data/iris_clean.json -o 3day/lab/data/model.pkl python 3day/lab/code/train.py
+git add dvc.yaml dvc.lock
+git commit -m "Add DVC pipeline"
+```
 
 **Note:** `dvc.yaml` contains pipeline definition; `dvc.lock` records exact versions.
 
   4. Run the pipeline with `dvc repro`.
 
+```bash
+dvc repro
+```
+
 **Check:** data/iris_clean.csv and data/model.pkl are created.
+**Note:** You can use `dvc dag` to check the order of execution.
 
 ---
 
