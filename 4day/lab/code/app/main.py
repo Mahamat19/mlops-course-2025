@@ -1,12 +1,13 @@
+import asyncio
 import pickle
+import time
 from contextlib import asynccontextmanager
-
-from config import LOGISTIC_MODEL, RF_MODEL
-from fastapi import FastAPI, HTTPException, Path
-from pydantic import BaseModel, Field
-import asyncio 
-
 from typing import Annotated
+
+from auth import require_api_key
+from config import LOGISTIC_MODEL, RF_MODEL
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Path
+from pydantic import BaseModel, Field
 
 
 class IrisData(BaseModel):
@@ -16,7 +17,6 @@ class IrisData(BaseModel):
     sepal_width: float = Field(default=3.1, gt=0, lt=10)
     petal_length: float = Field(default=2.1, gt=0, lt=10)
     petal_width: float = Field(default=4.1, gt=0, lt=10)
-
 
 
 ml_models = {}  # Global dictionary to hold the models.
@@ -68,6 +68,7 @@ async def list_models():
 async def predict(
     model_name: Annotated[str, Path(regex=r"^(logistic_model|rf_model)$")],
     iris: IrisData,
+    background_tasks: BackgroundTasks,
 ):
     # await asyncio.sleep(5) # Mimic heavy workload.
 
@@ -80,5 +81,42 @@ async def predict(
 
     ml_model = ml_models[model_name]
     prediction = ml_model.predict(input_data)
+
+    background_tasks.add_task(
+        log_prediction,
+        {"model": model_name, "features": iris.dict(), "prediction": prediction},
+    )
+
+    return {"model": model_name, "prediction": int(prediction[0])}
+
+
+def log_prediction(data: dict):
+    time.sleep(5)  # mimic heavy work.
+    print(f"Logging prediction: {data}")
+
+
+@app.post("/predict_secure/{model_name}")
+async def predict_secure(
+    model_name: Annotated[str, Path(regex=r"^(logistic_model|rf_model)$")],
+    iris: IrisData,
+    background_tasks: BackgroundTasks,
+    _: str = Depends(require_api_key),
+):
+    # await asyncio.sleep(5) # Mimic heavy workload.
+
+    input_data = [
+        [iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width]
+    ]
+
+    if model_name not in ml_models.keys():
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    ml_model = ml_models[model_name]
+    prediction = ml_model.predict(input_data)
+
+    background_tasks.add_task(
+        log_prediction,
+        {"model": model_name, "features": iris.dict(), "prediction": prediction},
+    )
 
     return {"model": model_name, "prediction": int(prediction[0])}
