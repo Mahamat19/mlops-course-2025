@@ -173,11 +173,20 @@ To start building our FastAPI app, we need to install FastAPI and a web server, 
 
 1. **Install FastAPI and Uvicorn**
 
+   ```bash
+   pip install fastapi[standard]
+   pip instal uvicorn
+   ```
+
 #### Task 1.2: Setting Up a Basic FastAPI App
 
 Next, we'll create a basic FastAPI app with a health check endpoint.
 
 1. Create a new Python file called `main.py`:
+
+   ```bash
+   touch main.py
+   ```
 
 2. Add the following code to main.py:
 
@@ -205,9 +214,27 @@ Now that we have our FastAPI app, let's run it using Uvicorn.
 
 1. Run the FastAPI app:
 
+   ```bash
+   uvicorn main:app --reload
+   ```
+
+   or
+
+   ```bash
+   fastapi dev main.py
+   ```
+
+   - **Explanations**:
+     - `main` refers to the name of the Python file (main.py).
+     - `app` refers to the FastAPI instance created inside the file.
+     - The `--reload` flag enables auto-reloading of the app when code changes are detected.
+
 2. Test the health check endpoint:
 
+   - visit `http://127.0.0.1:8000/health`
+
 3. Explore the Interactive API docs:
+   - visit `http://127.0.0.1:8000/docs`
 
 ### Part 2: Model Training and Setup
 
@@ -245,13 +272,51 @@ In this part, we'll train the **Logistic Regression** and **RandomForest** model
 
 2. **Run the script** to train and save the models:
 
+   ```bash
+   python train_models.py
+   ```
+
 #### Task 2.2: Attach Models in FastAPI using Lifespan
 
 We'll use FastAPI's lifespan feature to load the models when the application starts, and they'll be shared across routes for making predictions.
 
 1. **Create a FastAPI app with lifespan**:
 
+   ```python
+   from fastapi import FastAPI
+   from contextlib import asynccontextmanager
+   import pickle
+
+   ml_models = {} # Global dictionary to hold the models.
+   def load_model(path: str):
+       model = None
+       with open(path, "rb") as f:
+           model = pickle.load(f)
+       return model
+
+   @asynccontextmanager
+   async def lifespan(app: FastAPI):
+       # Load models when the app starts
+       ml_models['logistic_model'] = load_model("./models/logistic_regression.pkl)
+       ml_models['rf_model'] = load_model("./models/random_fores.pkl)
+
+       yield
+       # This code will be executed after the application finishes handling requests, right before the shutdown
+       # Clean up the ML models and release the resources
+       ml_models.clear()
+
+   app = FastAPI(lifespan=lifespan)
+
+   @app.get("/")
+   async def root():
+       return {"message": "Models loaded and FastAPI is ready!"}
+   ```
+
 2. **Run the FastAPI app**:
+
+   ```bash
+   uvicorn main:app --reload
+   ```
 
 #### Task 2.3: Create a GET endpoint to list available models
 
@@ -259,21 +324,56 @@ We will now create an additional endpoint that returns a list of all the availab
 
 1. Add a new route to list the models:
 
+   ```python
+   @app.get("/models")
+   async def list_models():
+       # Return the list of available models' names
+       return {"available_models": list(ml_models.keys())}
+   ```
+
 2. Run the FastAPI app and test the `/models` endpoint:
+
+   - Run following in command line:
+
+   ```bash
+   uvicorn main:app --reload
+   ```
+
+   - Visit `http://127.0.0.1:8000/models` or `http://127.0.0.1:8000/docs`.
 
 #### Task 2.4: Use a `.env` file for the location of models
 
 We will now create a `.env` file where we will store the location (path) to our models.
 
-1. Create a `.env` file and add two lines in it for the model location:
+1. Create a `.env` file and add two lines in it:
+
+   ```
+   LOGISTIC_MODEL={PATH_TO_YOUR_LOGISITC_MODEL}
+   RF_MODEL={PATH_TO_YOUR_RF_MODEL}
+   ```
 
 2. Load the `.env` varibles and access them in code.
 
-   - Install the required package if needed.
+   - Install the required package.
+
+   ``` bash
+   pip install python-dotenv
+   ```
 
    - Load the `.env` variables in code.
 
+   ``` python
+   from dotenv import load_dotenv
+   load_dotenv()
+   ```
+
    - Access the loaded environemnt variables where needed.
+
+   ``` python
+    # Load the ML model
+    ml_models["logistic_model"] = load_model(os.getenv("LOGISTIC_MODEL"))
+    ml_models["rf_model"] = load_model(os.getenv("RF_MODEL"))
+   ```
 
 ### Part 3: Building a Simple Prediction API
 
@@ -283,14 +383,53 @@ Now that the models are loaded, let's serve them through an API.
 
 We will first create a basic prediction API that accepts input data and uses the pre-loaded models to make predictions.
 
-1. Create a `BaseModel` for the input data (IrisData):
+1. Create a `BaseModel` for the input data:
+
+   ```python
+   from pydantic import BaseModel
+
+   class IrisData(BaseModel):
+       sepal_length: float
+       sepal_width: float
+       petal_length: float
+       petal_width: float
+   ```
 
    This `BaseModel` will enforce type validation and ensure the correct input schema for our API.
 
 2. Add a POST endpoint for model predictions:
 
+    ```python
+    from fastapi import HTTPException
+
+    @app.post("/predict/{model_name}")
+    async def predict(model_name: ModelName, iris: IrisData):
+        input_data = [[iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width]]
+        
+        if model_name not in ml_models.keys():
+            raise HTTPException(status_code=404, detail="Model not found")
+        
+        ml_model = ml_models[model_name]
+        prediction = ml_model.predict(input_data)
+
+        return {"model": model_name, "prediction": int(prediction[0])}
+    ```
+
 3. Test the API using `curl`:
    - Make a POST request with sample data to the`/predict` endpoint.
+
+    ```bash
+    curl -X 'POST' \
+      'http://localhost:8000/predict/rf_model' \
+      -H 'accept: application/json' \
+      -H 'Content-Type: application/json' \
+      -d '{
+      "sepal_length": 0.1,
+      "sepal_width": 0.1,
+      "petal_length": 0.1,
+      "petal_width": 0.1
+    }'
+    ```
 
 #### Task 3.2: Adding Asynchronous Predictions
 
@@ -298,19 +437,87 @@ To demonstrate FastAPI's asynchronous capabilities, we will simulate long-runnin
 
 1. Simulate the long-running tasks:
 
+   ```python
+
+   import asyncio
+
+   @app.post("/predict/{model_name}")
+   async def predict(model_name: ModelName, iris: IrisData):
+       await asyncio.sleep(5) # Mimic heavy workload.
+        
+       input_data = [[iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width]]
+        
+       if model_name not in ml_models.keys():
+           raise HTTPException(status_code=404, detail="Model not found")
+        
+       ml_model = ml_models[model_name]
+       prediction = ml_model.predict(input_data)
+
+       return {"model": model_name, "prediction": int(prediction[0])}
+   ```
+
 2. Test asynchronous behavior with multiple `curl` requests:
    - Make a POST request with sample data to the`/predict/logistic_regression` and `/predict/random_forest` endpoints.
+
+    ```bash
+      curl -X 'POST' \
+        'http://localhost:8000/predict/rf_model' \
+        -H 'accept: application/json' \
+        -H 'Content-Type: application/json' \
+        -d '{
+        "sepal_length": 0.1,
+        "sepal_width": 0.1,
+        "petal_length": 0.1,
+        "petal_width": 0.1
+      }' &
+      curl -X 'POST' \
+        'http://localhost:8000/predict/rf_model' \
+        -H 'accept: application/json' \
+        -H 'Content-Type: application/json' \
+        -d '{
+        "sepal_length": 0.1,
+        "sepal_width": 0.1,
+        "petal_length": 0.1,
+        "petal_width": 0.1
+      }'
+    ```
 
 #### Task 3.3: Enhanced Schema Validation
 
 We'll modify the IrisData schema to include constraints such as minimum and maximum values and add descriptions for each field. We'll also include default values for convenience.
 Add validation to ensure all input features are positive.
 
+```python
+
+from pydantic import BaseModel, Field
+
+class IrisData(BaseModel):
+    sepal_length: float = Field(..., gt=0, lt=10, description="Sepal length must be between 0 and 10", example=5.1)
+    sepal_width: float = Field(..., gt=0, lt=10, description="Sepal width must be between 0 and 10", example=3.5)
+    petal_length: float = Field(..., gt=0, lt=10, description="Petal length must be between 0 and 10", example=1.4)
+    petal_width: float = Field(..., gt=0, lt=10, description="Petal width must be between 0 and 10", example=0.2)
+
+```
+
 ### Part 4: More on FastAPI: Background tasks, Middlewares, etc
 
 #### Task 4.1: Background tasks for non-critical work
 
 - Log the prediction in the background using `BackgroundTasks`:
+
+```python
+from fastapi import BackgroundTasks
+
+def log_prediction(data: dict):
+    print(f"Logging prediction: {data}")
+
+@app.post("/predict_log/{model_name}")
+async def predict_log(model_name: str, iris: IrisData, background_tasks: BackgroundTasks):
+    X = [[iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width]]
+    pred = int(ml_models[model_name].predict(X)[0])
+    background_tasks.add_task(log_prediction, {"model": model_name, "features": iris.dict(), "pred": pred})
+    return {"model": model_name, "prediction": pred}
+```
 
 - Add a sleep in the background task and notice how prediction endpoint is not hanging/waiting for log to finish.
 
@@ -319,21 +526,113 @@ Add validation to ensure all input features are positive.
 - Add an auth key in your `.env` file.
 - Create an `auth.py` file and write a function to check if the key from API Key Header matches the one defined in `.env`
 
+```python
+from fastapi import Security, HTTPException
+from fastapi.security import APIKeyHeader
+import os
+
+API_KEY_NAME = "X-API-Key"
+API_KEY = os.getenv("XAPIKEY", "dev-secret")
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+def require_api_key(api_key: str = Security(api_key_header)):
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+```
+
 - Apply this function as dependency inside your routes.
+
+```python
+@app.post("/predict_secure/{model_name}")
+async def predict_secure(model_name: str, iris: IrisData, _: str = Depends(require_api_key)):
+    ...
+
+```
 
 #### Task 4.3: Authentication via Middleware
 
 - Replace per-route auth with middleware
 
+```python
+from fastapi import Request
+from starlette.responses import JSONResponse
+
+@app.middleware("http")
+async def check_auth(request: Request, call_next):
+    if request.headers.get("X-API-Key") != os.getenv("XAPIKEY", "dev-secret"):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+```
+
 - Whitelist certain routes to not require the AuthKey
+
+```python
+from fastapi import Request
+from starlette.responses import JSONResponse
+
+WHITELIST = {"/docs", "/openapi.json", "/health"}
+
+@app.middleware("http")
+async def check_auth(request: Request, call_next):
+    if request.url.path in WHITELIST:
+        return await call_next(request)
+    if request.headers.get("X-API-Key") != os.getenv("XAPIKEY", "dev-secret"):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
+```
 
 #### Task 4.4: Timing + Observability Middleware
 
 - Add request timing and structured logs as middleware.
 
+```python
+import time, uuid, json
+
+@app.middleware("http")
+async def log_timing(request: Request, call_next):
+    start = time.perf_counter()
+    req_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    response = await call_next(request)
+    duration = time.perf_counter() - start
+    response.headers["X-Process-Time"] = f"{duration:.3f}s"
+    response.headers["X-Request-ID"] = req_id
+    print(json.dumps({
+        "id": req_id,
+        "method": request.method,
+        "path": request.url.path,
+        "status": response.status_code,
+        "duration": round(duration, 3)
+    }))
+    return response
+```
+
 #### Task 4.5: Simple Local Caching
 
 - Create a local cache object to store/fetch predictions.
+
+```python
+import time
+
+CACHE = {}
+TTL = 30  # seconds
+
+def make_cache_key(model_name, iris: IrisData):
+    return f"{model_name}:{iris.json()}"
+
+@app.post("/predict_cached/{model_name}")
+async def predict_cached(model_name: str, iris: IrisData):
+    key = make_cache_key(model_name, iris)
+    now = time.time()
+
+    if key in CACHE and now - CACHE[key][0] < TTL:
+        return {"model": model_name, "prediction": CACHE[key][1], "cache": "HIT"}
+
+    X = [[iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width]]
+    pred = int(ml_models[model_name].predict(X)[0])
+    CACHE[key] = (now, pred)
+    return {"model": model_name, "prediction": pred, "cache": "MISS"}
+```
 
 - Verify the performance improvements by watching X-Process-Time or logs.
 

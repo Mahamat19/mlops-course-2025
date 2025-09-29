@@ -1,13 +1,18 @@
 import asyncio
+import json
+import os
 import pickle
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from auth import require_api_key
-from config import LOGISTIC_MODEL, RF_MODEL
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Path
+from config import API_KEY, LOGISTIC_MODEL, RF_MODEL
+from fastapi import (BackgroundTasks, Depends, FastAPI, HTTPException, Path,
+                     Request)
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
 
 class IrisData(BaseModel):
@@ -44,6 +49,64 @@ async def lifespan(app: FastAPI):
 
 # Create a FastAPI instance
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_timing(request: Request, call_next):
+    # preprocessing
+    start = time.perf_counter()
+    req_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+
+    # call next --> call the endpoint
+    response = await call_next(request)
+
+    # postprocessing
+    duration = time.perf_counter() - start
+    response.headers["X-Process-Time"] = f"{duration:.3f}s"
+    response.headers["X-Request-ID"] = req_id
+    print(
+        json.dumps(
+            {
+                "id": req_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration": round(duration, 3),
+            }
+        )
+    )
+
+    # return response
+    return response
+
+
+CACHE = {}
+"""
+key ---> TIMESTAMP, prediction
+rf_model:{speal_length:3,sepal_widht:4.1..} ---> 1
+logistic_model:{.....} ---> 0
+"""
+
+TTL = 30  # seconds
+
+
+def make_cache_key(model_name, iris: IrisData):
+    return f"{model_name}:{iris.json()}"
+
+
+@app.post("/predict_cached/{model_name}")
+async def predict_cached(model_name: str, iris: IrisData):
+    key = make_cache_key(model_name, iris)
+    now = time.time()
+
+    if key in CACHE and now - CACHE[key][0] < TTL:
+        return {"model": model_name, "prediction": CACHE[key][1], "cache": "HIT"}
+
+    X = [[iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width]]
+    pred = int(ml_models[model_name].predict(X)[0])
+
+    CACHE[key] = (now, pred)
+    return {"model": model_name, "prediction": pred, "cache": "MISS"}
 
 
 # Health check endpoint
