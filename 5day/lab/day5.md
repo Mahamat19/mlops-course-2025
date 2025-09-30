@@ -30,12 +30,70 @@ We’ll focus on how to:
 3. Expose port `8000`.  
 4. Run the container and access the app.  
 
+### Solution
+
+**Dockerfile:**
+
+```dockerfile
+# Part 1: Base image and Python
+FROM python:3.11-slim
+
+# Create non-root user
+RUN useradd -m appuser
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies separately (layer caching)
+COPY app/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the app
+COPY app/ .
+
+# Switch to non-root
+USER appuser
+
+# Expose API port
+EXPOSE 8000
+
+# Start FastAPI (CMD = default args)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**.dockerignore:**
+
+```
+__pycache__/
+*.pyc
+.venv/
+.git/
+```
+
+**Build & Run:**
+
+```bash
+docker build -t mlapi:latest .
+docker run -p 8000:8000 mlapi:latest
+```
+
+Run curl requests to test the endpoints:
+
+```bash
+curl -X POST localhost:8000/predict/logistic_model -H "Content-Type: application/json" \
+  -d '{"sepal_length":1.1,"sepal_width":3.1,"petal_length":2.1,"petal_width":4.1}'
+curl -X POST localhost:8000/predict_secure/rf_model \
+  -H "X-API-Key: dev-12345" -H "Content-Type: application/json" \
+  -d '{"sepal_length":1.2,"sepal_width":2.2,"petal_length":3.3,"petal_width":4.4}'
+```
+
 ### Notes
 
 - We copy requirements first for better caching.  
 - The `.dockerignore` reduces build context size ignoring irrelevant files.
 - Running as non-root improves security.  
 
+---
 
 ## Part 2 — Configuration with Env Vars & `.env` Files
 
@@ -46,9 +104,27 @@ We’ll focus on how to:
 
 ### Task
 
-1. Extract secrets from original image. This is to demo the vulnerability.
+1. Extract secrets from original image.
 2. Modify the build and run to attach the `.env` files _externally_.
 
+### Solution
+
+- Extract secrets with:
+
+```bash
+docker cp busy_lederberg:/app/.env ./stolen.env
+```
+
+- Add `app/.env` to `.dockerignore`.
+
+- Run:
+
+```bash
+docker build -t mlapi_noenv:latest .
+docker run --env-file app/.env -p 8000:8000 mlapi_noenv:latest
+```
+
+---
 
 ## Part 3 — Model Mounting with Volumes
 
@@ -63,6 +139,11 @@ We’ll focus on how to:
 2. Add `/models` to `.dockerignore`.  
 3. Run docker while mounting a volume (use `-v`).  
 
+### Solution
+
+```bash
+docker run --env-file app/.env -p 8000:8000  -v ./app/models:/models mlapi_nomodel
+```
 
 ### Notes
 
@@ -74,6 +155,7 @@ docker run -v <host-path>:<container-path>[:opts]
 
 - Now if you drop a new `model.pkl` into `./app/models`, the container uses it without rebuild.
 
+---
 
 ## Part 4 — Docker Compose Basics
 
@@ -88,7 +170,26 @@ docker run -v <host-path>:<container-path>[:opts]
 2. Configure env vars, model mount, and secret mount.  
 3. Run with `docker compose up`.  
 
+### Solution
 
+```yaml
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: ./app/.env
+    volumes:
+      - ./app/models:/models
+```
+
+Run:
+
+```bash
+docker compose up --build
+```
+
+---
 
 ## (BONUS) Part 5 — Secrets Management (don’t bake into images)
 
@@ -101,11 +202,66 @@ docker run -v <host-path>:<container-path>[:opts]
 
 ### Task
 
-1. Extract api key from running container. This is to demo the vulnerability.
+1. Extract api key from running container.
 2. Create a secret file for the secret.
 3. Define the secret in `compose.yaml`.  
-4. Modify app to read the secret at runtime or update the entrypoint to export the secret key.  
+4. Modify app to read the secret at runtime.  
 
+### Solution
+
+- Check for secrets in env file.
+
+```bash
+docker inspect <container_id>
+```
+
+- Update `compose.yaml`
+
+```yaml
+services:
+  api-container:
+    build: .
+    image: mlapi_nosecret:latest
+    ports:
+      - "8000:8000"
+    env_file: ./app/.env2
+    volumes:
+      - ./app/models:/models:ro
+    secrets:
+      - source: api_key
+        target: api_key
+
+secrets:
+  api_key:
+    file: ./secrets/api_key.txt
+```
+
+- In `auth.py` load `API_KEY` from newly added secret
+
+```python
+def load_secret(name: str, default=None):
+    # allow local dev via dotenv/env
+    val = os.getenv(name)
+    if val:
+        return val
+    # prod: mounted file at /run/secrets/<lowercased name>
+    p = Path(f"/run/secrets/{name.lower()}")
+    if p.exists():
+        print(p.read_text().strip())
+        return p.read_text().strip()
+    print("nista")
+    print(name.lower())
+    return default
+
+
+API_KEY = load_secret("API_KEY")
+```
+
+- Secret can still be "leaked":
+
+```bash
+docker compose exec api sh -c 'cat /run/secrets/api_key'
+```
 
 ### Notes
 

@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 .git/
+app/.env
+app/models/
+app/.env2
