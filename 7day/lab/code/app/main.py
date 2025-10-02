@@ -6,10 +6,9 @@ from typing import Annotated
 import pandas as pd
 from dotenv import load_dotenv
 from evidently import Report
-from evidently.legacy.test_preset import DataQualityTestPreset
 from evidently.presets import DataDriftPreset
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Path
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sklearn.datasets import load_iris
 
@@ -94,9 +93,4 @@ async def predict(
     model = ml_models[model_name]
     prediction = model.predict(input_data)
 
-    # background_tasks.add_task(log_data, input_data[0], int(prediction[0]))
-
     return {"model": model_name, "prediction": int(prediction[0])}
-
-
-### PART 3 solution
