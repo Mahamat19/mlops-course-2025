@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from evidently import Report
 from evidently.presets import DataDriftPreset
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Path
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sklearn.datasets import load_iris
 
@@ -62,11 +62,6 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.get("/new_endpoint")
-async def new_endpoint():
-    return {"new": "endpoint"}
-
-
 @app.get("/models")
 async def list_models():
     return {"available_models": list(ml_models.keys())}
@@ -93,4 +88,70 @@ async def predict(
     model = ml_models[model_name]
     prediction = model.predict(input_data)
 
+    background_tasks.add_task(log_data, input_data[0], int(prediction[0]))
+
     return {"model": model_name, "prediction": int(prediction[0])}
+
+
+### PART 3 solution
+# Global variable for storing logs
+DATA_LOG = []
+DATA_WINDOW_SIZE = 45
+
+
+def log_data(iris_data: list, prediction: int):
+    global DATA_LOG
+    iris_data.append(prediction)
+    DATA_LOG.append(iris_data)
+
+
+def load_train_data():
+    iris = load_iris()
+    df = pd.DataFrame(iris.data, columns=iris.feature_names)
+    df["species"] = iris.target
+    return df
+
+
+# loads our latest predictions
+def load_last_predictions():
+    prediction_data = pd.DataFrame(
+        DATA_LOG[-DATA_WINDOW_SIZE:],
+        columns=[
+            "sepal length (cm)",
+            "sepal width (cm)",
+            "petal length (cm)",
+            "petal width (cm)",
+            "species",
+        ],
+    )
+    return prediction_data
+
+
+def generate_dashboard() -> str:
+    data_report = Report(
+        metrics=[
+            DataDriftPreset(),
+        ],
+        include_tests="True",
+    )
+
+    reference_data = load_train_data()
+    current_data = load_last_predictions()
+
+    generated_report = data_report.run(
+        reference_data=reference_data, current_data=current_data
+    )
+
+    return generated_report.save_html("report.html")
+
+
+@app.get("/monitoring", tags=["Other"])
+def monitoring():
+    if len(DATA_LOG) == 0:
+        return {"msg": "No data."}
+    generate_dashboard()
+    return FileResponse(
+        path=str("report.html"),
+        media_type="text/html; charset=utf-8",
+        filename="monitoring_report.html",
+    )

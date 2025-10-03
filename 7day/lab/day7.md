@@ -92,6 +92,47 @@ We will simulate logging input data and predictions to a global variable, mimick
 - Create a function that logs (appends) needed feature/prediction variables to a global variable `DATA_LOG`.
 - Adjust the FastAPI's endpoint `/predict` so that it calls the logging function as `BackgroundTasks`
   
+**Solution:**
+
+```python
+from fastapi import FastAPI, BackgroundTasks
+import pandas as pd
+
+
+# Global variable for storing logs
+DATA_LOG = []
+
+@app.post("/predict/{model_name}")
+async def predict(
+    model_name: Annotated[str, Path(pattern=r"^(logistic_model|rf_model)$")],
+    iris_data: IrisData,
+    background_tasks: BackgroundTasks,
+):
+    input_data = [
+        [
+            iris_data.sepal_length,
+            iris_data.sepal_width,
+            iris_data.petal_length,
+            iris_data.petal_width,
+        ]
+    ]
+
+    if model_name not in ml_models.keys():
+        raise HTTPException(status_code=404, detail="Model not found.")
+
+    model = ml_models[model_name]
+    prediction = model.predict(input_data)
+
+    background_tasks.add_task(log_data, input_data[0], int(prediction[0]))
+
+    return {"model": model_name, "prediction": int(prediction[0])}
+
+def log_data(iris_data: list, prediction: int):
+    global DATA_LOG
+    iris_data.append(prediction)
+    DATA_LOG.append(iris_data)
+```
+
 #### Task 2: Load Original and Production Data
 
 Now, we need to load two datasets the reference dataset (original iris dataset) and the production dataset (the one from logs).
@@ -103,6 +144,35 @@ Now, we need to load two datasets the reference dataset (original iris dataset) 
 - Create a new global variable `WINDOW_SIZE`.
 - Adjust last function so that you can load last `WINDOW_SIZE` records from the data log.
 
+**Solutions:**
+
+```python
+from sklearn.datasets import load_iris
+
+DATA_WINDOW_SIZE = 45
+
+def load_train_data():
+    iris = load_iris()
+    df = pd.DataFrame(iris.data, columns=iris.feature_names)
+    df["species"] = iris.target
+    return df
+
+
+# loads our latest predictions
+def load_last_predictions():
+    prediction_data = pd.DataFrame(
+        DATA_LOG[-DATA_WINDOW_SIZE:],
+        columns=[
+            "sepal length (cm)",
+            "sepal width (cm)",
+            "petal length (cm)",
+            "petal width (cm)",
+            "species",
+        ],
+    )
+    return prediction_data
+```
+
 #### Task 3: Create a Dashboard with Evidently
 
 We will now create a function that compares the original dataset with the production data (last `WINDOW_SIZE` requests) and generates a drift detection report.
@@ -111,6 +181,29 @@ We will now create a function that compares the original dataset with the produc
 
 - Use Evidently to build a preset dashboard that compares the reference and production datasets (make sure to load the data with functions from part 2).
 - This dashboard should include drift detection reports like DataDriftPreset, as well as the tests.
+
+**Solutions:**
+
+```python
+from evidently import Report
+from evidently.presets import DataDriftPreset
+
+
+def generate_dashboard() -> str:
+    data_report = Report(
+        metrics=[
+            DataDriftPreset(),
+        ],
+        include_tests="True"
+    )
+
+    reference_data = load_train_data()
+    current_data = load_last_predictions()
+
+    generated_report = data_report.run(reference_data=reference_data, current_data=current_data)
+
+    return generated_report.save_html("report.html")
+```
 
 #### Task 4: Create a Monitoring Endpoint
 
@@ -121,10 +214,41 @@ Finally, create an endpoint `/monitoring` that triggers the drift detection repo
 - Write a `/monitoring` endpoint that generates the Evidently report.
 - Serve the report as an HTML file to be donwloaded.
 
+**Solution:**
+
+```python
+@app.get("/monitoring", tags=["Other"])
+def monitoring():
+    if len(DATA_LOG) == 0:
+        return {"msg": "No data."}
+    generate_dashboard()
+    return FileResponse(
+        path=str("report.html"),
+        media_type="text/html; charset=utf-8",
+        filename="monitoring_report.html",
+    )
+```
+
 #### Task 5: Test your report(s)
 
 - Write a custom training script/functions to test the dashboard generation.
 - Make sure to introduce artificial data drift.
+
+```python
+import requests
+
+def send_request(data, data_drift = False):
+    if data_drift:
+        data.col1 = 1
+        data.col2 = 1
+        data.col3 = 1
+        data.col4 = 1
+    url = 'http://localhost:8000/predict/logistic_model'
+    payload = {"sepal_length": data.col1, "sepal_width": data.col2, "petal_length": data.col3, "petal_width": data.col4}
+    headers = {'content-type': 'application/json', 'accept': 'application/json'}
+    r = requests.post(url, json=payload, headers=headers)
+    return r.json()['prediction']
+```
 
 ## Conclusion
 
